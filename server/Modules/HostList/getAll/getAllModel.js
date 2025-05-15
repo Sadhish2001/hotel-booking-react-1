@@ -13,7 +13,7 @@ class GetAllInfo {
     ld.*,                      -- All columns from location_details
     pd.*,                      -- All columns from property_details
     pr.*,                      -- All columns from property_rules
-    ri.*,                      -- All columns from room_images
+    ri.image_paths,            -- Explicitly select image_paths from room_images
     rpa.*,                     -- All columns from room_pricing_availability
     rs.*                       -- All columns from room_setup
 FROM 
@@ -27,12 +27,13 @@ LEFT JOIN
 LEFT JOIN 
     property_rules pr ON bi.property_id = pr.property_id AND bi.user_id = pr.user_id
 LEFT JOIN 
-    room_images ri ON bi.property_id = ri.property_id
+    room_setup rs ON bi.property_id = rs.property_id AND bi.user_id = rs.user_id
 LEFT JOIN 
-    room_pricing_availability rpa ON bi.property_id = rpa.property_id
+    room_images ri ON ri.property_id = bi.property_id AND ri.room_id = rs.room_id
 LEFT JOIN 
-    room_setup rs ON bi.property_id = rs.property_id AND bi.user_id = rs.user_id;
-
+    room_pricing_availability rpa ON rpa.property_id = bi.property_id 
+    AND rpa.floor = rs.floor 
+    AND rpa.room_type = rs.room_type;
             `;
 
             const [results] = await db.query(query, [userId]);
@@ -45,18 +46,32 @@ LEFT JOIN
             const propertiesMap = new Map();
 
             results.forEach(result => {
-                if (!propertiesMap.has(result.property_id)) {
-                    // Parse image paths and convert to full URLs
-                    let imageUrls = [];
-                    if (result.image_paths) {
-                        try {
-                            const paths = JSON.parse(result.image_paths);
-                            imageUrls = paths.map(path => `/assets/${path}`);
-                        } catch (e) {
-                            console.error('Error parsing image paths:', e);
-                        }
-                    }
+                const roomInfo = {
+                    room_id: result.room_id,
+                    image_urls: result.image_paths ? JSON.parse(result.image_paths) : [],
+                    floor: result.floor,
+                    room_type: result.room_type,
+                    number_of_rooms: result.number_of_rooms,
+                    total_capacity: result.total_capacity,
+                    room_capacity_adults: result.room_capacity_adults,
+                    room_capacity_children: result.room_capacity_children,
+                    base_price: result.base_price,
+                    occupancy_price_adjustments: result.occupancy_price_adjustments,
+                    child_pricing: result.child_pricing,
+                    instant_payment_enabled: result.instant_payment_enabled,
+                    free_cancellation_enabled: result.free_cancellation_enabled,
+                    refundable1: result.refundable1,
+                    days_before1: result.days_before1,
+                    refund_percent1: result.refund_percent1,
+                    refundable2: result.refundable2,
+                    days_before2: result.days_before2,
+                    refund_percent2: result.refund_percent2,
+                    refundable3: result.refundable3,
+                    days_before3: result.days_before3,
+                    refund_percent3: result.refund_percent3
+                };
 
+                if (!propertiesMap.has(result.property_id)) {
                     propertiesMap.set(result.property_id, {
                         property_id: result.property_id,
                         user_id: result.user_id,
@@ -64,7 +79,7 @@ LEFT JOIN
                         property_type: result.property_type,
                         created_at: result.created_at,
                         updated_at: result.updated_at,
-                         location: {
+                        location: {
                             address_line1: result.address_line1,
                             address_line2: result.address_line2,
                             city: result.city,
@@ -150,38 +165,7 @@ LEFT JOIN
                             cot_cost: result.cot_cost,
                             rule_description: result.rule_description
                         },
-                        room: {
-                            room_id: result.room_id,
-                            image_urls: imageUrls,
-                            floor: result.floor,
-                            room_type: result.room_type,
-                            number_of_rooms: result.number_of_rooms,
-                            total_capacity: result.total_capacity,
-                            room_capacity_adults: result.room_capacity_adults,
-                            room_capacity_children: result.room_capacity_children,
-                            base_price: result.base_price,
-                            occupancy_price_adjustments: result.occupancy_price_adjustments,
-                            child_pricing: result.child_pricing,
-                            instant_payment_enabled: result.instant_payment_enabled,
-                            free_cancellation_enabled: result.free_cancellation_enabled,
-                            refundable1: result.refundable1,
-                            days_before1: result.days_before1,
-                            refund_percent1: result.refund_percent1,
-                            refundable2: result.refundable2,
-                            days_before2: result.days_before2,
-                            refund_percent2: result.refund_percent2,
-                            refundable3: result.refundable3,
-                            days_before3: result.days_before3,
-                            refund_percent3: result.refund_percent3
-                        },
-                        room_setup: {
-                            room_id: result.room_id,
-                            floor: result.floor,
-                            room_type: result.room_type,
-                            number_of_rooms: result.number_of_rooms,
-                            created_at: result.created_at,
-                            updated_at: result.updated_at
-                        },
+                        rooms: [roomInfo],
                         property_details: {
                             description: result.description,
                             nearest_beach_distance: result.nearest_beach_distance,
@@ -198,6 +182,12 @@ LEFT JOIN
                             updated_at: result.updated_at
                         }
                     });
+                } else {
+                    // Add additional rooms to the existing property
+                    const property = propertiesMap.get(result.property_id);
+                    if (!property.rooms.some(room => room.room_id === roomInfo.room_id)) {
+                        property.rooms.push(roomInfo);
+                    }
                 }
             });
 
@@ -217,7 +207,7 @@ LEFT JOIN
                     ld.*,
                     pd.*,
                     pr.*,
-                    ri.*,
+                    ri.image_paths,
                     rpa.*,
                     rs.*
                 FROM basic_info bi
@@ -225,9 +215,11 @@ LEFT JOIN
                 LEFT JOIN location_details ld ON bi.property_id = ld.property_id AND bi.user_id = ld.user_id
                 LEFT JOIN property_details pd ON bi.property_id = pd.property_id
                 LEFT JOIN property_rules pr ON bi.property_id = pr.property_id AND bi.user_id = pr.user_id
-                LEFT JOIN room_images ri ON bi.property_id = ri.property_id
-                LEFT JOIN room_pricing_availability rpa ON bi.property_id = rpa.property_id
                 LEFT JOIN room_setup rs ON bi.property_id = rs.property_id AND bi.user_id = rs.user_id
+                LEFT JOIN room_images ri ON ri.property_id = bi.property_id AND ri.room_id = rs.room_id
+                LEFT JOIN room_pricing_availability rpa ON rpa.property_id = bi.property_id 
+                    AND rpa.floor = rs.floor 
+                    AND rpa.room_type = rs.room_type
                 WHERE bi.user_id = ?
             `;
 
@@ -337,7 +329,7 @@ LEFT JOIN
                         },
                         room: {
                             room_id: result.room_id,
-                            image_paths: result.image_paths,
+                            image_urls: result.image_paths ? JSON.parse(result.image_paths) : [],
                             floor: result.floor,
                             room_type: result.room_type,
                             number_of_rooms: result.number_of_rooms,
@@ -401,7 +393,7 @@ LEFT JOIN
                     ld.*,
                     pd.*,
                     pr.*,
-                    ri.*,
+                    ri.image_paths,
                     rpa.*,
                     rs.*
                 FROM basic_info bi
@@ -409,9 +401,11 @@ LEFT JOIN
                 LEFT JOIN location_details ld ON bi.property_id = ld.property_id AND bi.user_id = ld.user_id
                 LEFT JOIN property_details pd ON bi.property_id = pd.property_id
                 LEFT JOIN property_rules pr ON bi.property_id = pr.property_id AND bi.user_id = pr.user_id
-                LEFT JOIN room_images ri ON bi.property_id = ri.property_id
-                LEFT JOIN room_pricing_availability rpa ON bi.property_id = rpa.property_id
                 LEFT JOIN room_setup rs ON bi.property_id = rs.property_id AND bi.user_id = rs.user_id
+                LEFT JOIN room_images ri ON ri.property_id = bi.property_id AND ri.room_id = rs.room_id
+                LEFT JOIN room_pricing_availability rpa ON rpa.property_id = bi.property_id 
+                    AND rpa.floor = rs.floor 
+                    AND rpa.room_type = rs.room_type
                 WHERE bi.property_id = ?
             `;
 
@@ -425,6 +419,31 @@ LEFT JOIN
             const propertiesMap = new Map();
 
             results.forEach(result => {
+                const roomInfo = {
+                    room_id: result.room_id,
+                    image_urls: result.image_paths ? JSON.parse(result.image_paths) : [],
+                    floor: result.floor,
+                    room_type: result.room_type,
+                    number_of_rooms: result.number_of_rooms,
+                    total_capacity: result.total_capacity,
+                    room_capacity_adults: result.room_capacity_adults,
+                    room_capacity_children: result.room_capacity_children,
+                    base_price: result.base_price,
+                    occupancy_price_adjustments: result.occupancy_price_adjustments,
+                    child_pricing: result.child_pricing,
+                    instant_payment_enabled: result.instant_payment_enabled,
+                    free_cancellation_enabled: result.free_cancellation_enabled,
+                    refundable1: result.refundable1,
+                    days_before1: result.days_before1,
+                    refund_percent1: result.refund_percent1,
+                    refundable2: result.refundable2,
+                    days_before2: result.days_before2,
+                    refund_percent2: result.refund_percent2,
+                    refundable3: result.refundable3,
+                    days_before3: result.days_before3,
+                    refund_percent3: result.refund_percent3
+                };
+
                 if (!propertiesMap.has(result.property_id)) {
                     propertiesMap.set(result.property_id, {
                         property_id: result.property_id,
@@ -519,38 +538,7 @@ LEFT JOIN
                             cot_cost: result.cot_cost,
                             rule_description: result.rule_description
                         },
-                        room: {
-                            room_id: result.room_id,
-                            image_paths: result.image_paths,
-                            floor: result.floor,
-                            room_type: result.room_type,
-                            number_of_rooms: result.number_of_rooms,
-                            total_capacity: result.total_capacity,
-                            room_capacity_adults: result.room_capacity_adults,
-                            room_capacity_children: result.room_capacity_children,
-                            base_price: result.base_price,
-                            occupancy_price_adjustments: result.occupancy_price_adjustments,
-                            child_pricing: result.child_pricing,
-                            instant_payment_enabled: result.instant_payment_enabled,
-                            free_cancellation_enabled: result.free_cancellation_enabled,
-                            refundable1: result.refundable1,
-                            days_before1: result.days_before1,
-                            refund_percent1: result.refund_percent1,
-                            refundable2: result.refundable2,
-                            days_before2: result.days_before2,
-                            refund_percent2: result.refund_percent2,
-                            refundable3: result.refundable3,
-                            days_before3: result.days_before3,
-                            refund_percent3: result.refund_percent3
-                        },
-                        room_setup: {
-                            room_id: result.room_id,
-                            floor: result.floor,
-                            room_type: result.room_type,
-                            number_of_rooms: result.number_of_rooms,
-                            created_at: result.created_at,
-                            updated_at: result.updated_at
-                        },
+                        rooms: [roomInfo],
                         property_details: {
                             description: result.description,
                             nearest_beach_distance: result.nearest_beach_distance,
@@ -567,12 +555,20 @@ LEFT JOIN
                             updated_at: result.updated_at
                         }
                     });
+                } else {
+                    // Add additional rooms to the existing property
+                    const property = propertiesMap.get(result.property_id);
+                    if (!property.rooms.some(room => room.room_id === roomInfo.room_id)) {
+                        property.rooms.push(roomInfo);
+                    }
                 }
             });
 
-            return Array.from(propertiesMap.values());
+            // Since we're querying by property_id, we should only have one property
+            const properties = Array.from(propertiesMap.values());
+            return properties[0];
         } catch (error) {
-            console.error('Error getting combined info by ID:', error);
+            console.error('Error getting combined info by property ID:', error);
             throw error;
         }
     }
